@@ -59,7 +59,14 @@ export async function getArtistsByIds(
       `/artists?ids=${batch.join(",")}`
     );
     if (!res.ok) {
-      console.error(`[spotify] getArtistsByIds batch failed: ${res.status}`);
+      console.warn(`[spotify] getArtistsByIds batch failed (${res.status}). Retrying individually...`);
+      for (const singleId of batch) {
+        const singleRes = await spotifyFetch(accessToken, `/artists/${singleId}`);
+        if (singleRes.ok) {
+          const singleData = await singleRes.json() as SpotifyArtist;
+          artists.push(singleData);
+        }
+      }
       continue;
     }
     const data = (await res.json()) as { artists: (SpotifyArtist | null)[] };

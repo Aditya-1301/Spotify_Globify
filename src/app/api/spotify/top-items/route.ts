@@ -74,8 +74,7 @@ export async function GET(request: NextRequest) {
     // Fetch full details for track-only artists (images, genres)
     if (missingArtists.size > 0) {
       console.log(`[top-items] Enriching ${missingArtists.size} track-only artists...`);
-      // Only request valid Spotify base62 IDs to prevent 400 Bad Request batch failures
-      const validIdsForApi = Array.from(missingArtists.keys()).filter(id => /^[a-zA-Z0-9]{22}$/.test(id));
+      const validIdsForApi = Array.from(missingArtists.keys()).filter(id => !id.includes("local"));
       const enriched = validIdsForApi.length > 0 ? await getArtistsByIds(auth.accessToken, validIdsForApi) : [];
       
       for (const a of enriched) {
