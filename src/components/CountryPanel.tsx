@@ -1,21 +1,31 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import type { CountryData } from "@/lib/aggregation";
 import { getCountryFlag, COUNTRY_LANGUAGE } from "@/lib/iso-numeric";
 
 interface Props {
   countryData: CountryData[];
-  /** The country to display — null shows the overview */
   activeCountry: CountryData | null;
   onSelectCountry: (country: CountryData | null) => void;
+}
+
+interface PreviewTrack {
+  id: string;
+  name: string;
+  artists: string;
+  album: string;
+  spotifyUrl: string;
+  imageUrl: string | null;
 }
 
 export default function CountryPanel({ countryData, activeCountry, onSelectCountry }: Props) {
   const [creatingFor, setCreatingFor] = useState<string | null>(null);
   const [playlistUrl, setPlaylistUrl] = useState<string | null>(null);
   const [playlistFor, setPlaylistFor] = useState<string | null>(null);
+  const [previewTracks, setPreviewTracks] = useState<PreviewTrack[] | null>(null);
+  const [previewingFor, setPreviewingFor] = useState<string | null>(null);
 
   const handleCreatePlaylist = async (country: CountryData) => {
     setCreatingFor(country.countryCode);
@@ -42,15 +52,42 @@ export default function CountryPanel({ countryData, activeCountry, onSelectCount
     }
   };
 
+  const handlePreviewPlaylist = async (country: CountryData) => {
+    setPreviewingFor(country.countryCode);
+    setPreviewTracks(null);
+    try {
+      const res = await fetch("/api/playlists/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          countryCode: country.countryCode,
+          countryName: country.countryName,
+          seedArtistIds: country.topArtists.slice(0, 5).map((a) => a.id),
+          dryRun: true,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      const data = (await res.json()) as { tracks: PreviewTrack[] };
+      setPreviewTracks(data.tracks);
+    } catch (err) {
+      console.error("Preview failed:", err);
+    } finally {
+      setPreviewingFor(null);
+    }
+  };
+
   if (activeCountry) {
     const cc = activeCountry.countryCode;
     return (
       <CountryDetailView
         country={activeCountry}
-        onBack={() => onSelectCountry(null)}
+        onBack={() => { onSelectCountry(null); setPreviewTracks(null); }}
         onCreatePlaylist={handleCreatePlaylist}
+        onPreviewPlaylist={handlePreviewPlaylist}
         creatingPlaylist={creatingFor === cc}
+        previewingPlaylist={previewingFor === cc}
         playlistUrl={playlistFor === cc ? playlistUrl : null}
+        previewTracks={previewTracks}
       />
     );
   }
@@ -58,7 +95,9 @@ export default function CountryPanel({ countryData, activeCountry, onSelectCount
   return <StatsOverview countryData={countryData} onSelectCountry={onSelectCountry} />;
 }
 
-// ---- Stats Overview ----
+// ---- Stats Overview with Tabs ----
+
+type ViewMode = "countries" | "languages" | "genres";
 
 function StatsOverview({
   countryData,
@@ -67,8 +106,32 @@ function StatsOverview({
   countryData: CountryData[];
   onSelectCountry: (c: CountryData) => void;
 }) {
+  const [viewMode, setViewMode] = useState<ViewMode>("countries");
+
   const totalArtists = countryData.reduce((s, c) => s + c.artistCount, 0);
   const totalTracks = countryData.reduce((s, c) => s + c.trackCount, 0);
+
+  const allGenres = useMemo(() => {
+    const genreMap = new Map<string, number>();
+    for (const c of countryData) {
+      for (const g of c.genres) {
+        genreMap.set(g, (genreMap.get(g) || 0) + 1);
+      }
+    }
+    return Array.from(genreMap.entries())
+      .sort((a, b) => b[1] - a[1]);
+  }, [countryData]);
+
+  const allLanguages = useMemo(() => {
+    const langMap = new Map<string, number>();
+    for (const c of countryData) {
+      for (const l of c.languages) {
+        langMap.set(l, (langMap.get(l) || 0) + c.artistCount);
+      }
+    }
+    return Array.from(langMap.entries())
+      .sort((a, b) => b[1] - a[1]);
+  }, [countryData]);
 
   if (countryData.length === 0) {
     return (
@@ -86,21 +149,39 @@ function StatsOverview({
         <h2 className="text-[11px] font-semibold text-muted uppercase tracking-widest mb-3">
           Music Passport
         </h2>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-5 gap-2">
           <Stat value={countryData.length} label="Countries" accent />
           <Stat value={totalArtists} label="Artists" />
           <Stat value={totalTracks} label="Tracks" />
+          <Stat value={allLanguages.length} label="Languages" />
+          <Stat value={allGenres.length} label="Genres" />
         </div>
       </div>
 
-      {/* Country list */}
-      <div className="px-5 pt-4 pb-1 shrink-0">
-        <h3 className="text-[11px] font-semibold text-muted uppercase tracking-widest">
-          Top Countries
-        </h3>
+      {/* View mode tabs */}
+      <div className="flex gap-1 px-5 pt-3 pb-2 shrink-0">
+        {([
+          { key: "countries" as ViewMode, label: "Countries" },
+          { key: "languages" as ViewMode, label: "Languages" },
+          { key: "genres" as ViewMode, label: "Genres" },
+        ]).map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setViewMode(tab.key)}
+            className={`px-3 py-1 text-[11px] rounded-full transition-colors ${
+              viewMode === tab.key
+                ? "bg-accent/20 text-accent font-semibold"
+                : "text-muted hover:text-foreground"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
+
+      {/* Scrollable list */}
       <div className="flex-1 overflow-y-auto min-h-0 px-3 pb-4">
-        {countryData.map((country, idx) => (
+        {viewMode === "countries" && countryData.map((country, idx) => (
           <CountryRow
             key={country.countryCode}
             country={country}
@@ -108,6 +189,12 @@ function StatsOverview({
             maxArtists={countryData[0].artistCount}
             onClick={() => onSelectCountry(country)}
           />
+        ))}
+        {viewMode === "languages" && allLanguages.map(([lang, count], idx) => (
+          <TagRow key={lang} label={lang} count={count} rank={idx + 1} maxCount={allLanguages[0]?.[1] || 1} emoji="🗣" />
+        ))}
+        {viewMode === "genres" && allGenres.map(([genre, count], idx) => (
+          <TagRow key={genre} label={genre} count={count} rank={idx + 1} maxCount={allGenres[0]?.[1] || 1} emoji="🎵" />
         ))}
       </div>
     </div>
@@ -117,8 +204,8 @@ function StatsOverview({
 function Stat({ value, label, accent }: { value: number; label: string; accent?: boolean }) {
   return (
     <div className="text-center">
-      <div className={`text-2xl font-bold ${accent ? "text-accent" : "text-foreground"}`}>{value}</div>
-      <div className="text-[11px] text-muted mt-0.5">{label}</div>
+      <div className={`text-xl font-bold ${accent ? "text-accent" : "text-foreground"}`}>{value}</div>
+      <div className="text-[10px] text-muted mt-0.5">{label}</div>
     </div>
   );
 }
@@ -165,20 +252,60 @@ function CountryRow({
   );
 }
 
+function TagRow({
+  label,
+  count,
+  rank,
+  maxCount,
+  emoji,
+}: {
+  label: string;
+  count: number;
+  rank: number;
+  maxCount: number;
+  emoji: string;
+}) {
+  const barWidth = Math.max(4, Math.round((count / maxCount) * 100));
+  return (
+    <div className="flex items-center gap-3 px-2 py-2.5 rounded-xl text-left">
+      <span className="text-[11px] font-mono text-muted w-4 shrink-0 text-right">{rank}</span>
+      <span className="text-lg w-7 text-center shrink-0">{emoji}</span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <span className="text-sm font-medium truncate">{label}</span>
+          <span className="text-xs text-muted shrink-0">{count}</span>
+        </div>
+        <div className="h-1 rounded-full bg-surface-elevated overflow-hidden">
+          <div
+            className="h-full rounded-full bg-accent/60 transition-all"
+            style={{ width: `${barWidth}%` }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---- Country Detail View ----
 
 function CountryDetailView({
   country,
   onBack,
   onCreatePlaylist,
+  onPreviewPlaylist,
   creatingPlaylist,
+  previewingPlaylist,
   playlistUrl,
+  previewTracks,
 }: {
   country: CountryData;
   onBack: () => void;
   onCreatePlaylist: (c: CountryData) => void;
+  onPreviewPlaylist: (c: CountryData) => void;
   creatingPlaylist: boolean;
+  previewingPlaylist: boolean;
   playlistUrl: string | null;
+  previewTracks: PreviewTrack[] | null;
 }) {
   const flag = getCountryFlag(country.countryCode);
   const languages = country.languages.length > 0 ? country.languages : (COUNTRY_LANGUAGE[country.countryCode] || []);
@@ -253,18 +380,11 @@ function CountryDetailView({
                   <div className="text-sm font-medium group-hover:text-accent transition-colors truncate">
                     {artist.name}
                   </div>
-                  <div className="flex flex-wrap gap-x-2 gap-y-0.5 mt-0.5">
-                    {(artist.genres ?? []).length > 0 && (
-                      <div className="text-[11px] text-muted truncate max-w-[180px]">
-                        🎵 {(artist.genres ?? []).slice(0, 3).join(", ")}
-                      </div>
-                    )}
-                    {languages.length > 0 && (
-                      <div className="text-[11px] text-muted/80 truncate">
-                        🗣 {languages.join(", ")}
-                      </div>
-                    )}
-                  </div>
+                  {(artist.genres ?? []).length > 0 && (
+                    <div className="text-[11px] text-muted truncate">
+                      🎵 {(artist.genres ?? []).slice(0, 3).join(", ")}
+                    </div>
+                  )}
                 </div>
                 <svg
                   className="w-3.5 h-3.5 text-muted opacity-0 group-hover:opacity-60 transition-opacity shrink-0"
@@ -303,40 +423,98 @@ function CountryDetailView({
           </div>
         )}
 
+        {/* Preview tracks */}
+        {previewTracks && previewTracks.length > 0 && (
+          <div className="px-5 pt-5">
+            <h3 className="text-[11px] font-semibold text-muted uppercase tracking-widest mb-3">
+              Playlist Preview ({previewTracks.length} tracks)
+            </h3>
+            <div className="space-y-1 max-h-[300px] overflow-y-auto">
+              {previewTracks.map((track) => (
+                <a
+                  key={track.id}
+                  href={track.spotifyUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2.5 p-1.5 -mx-1.5 rounded-lg hover:bg-surface-elevated transition-colors group"
+                >
+                  {track.imageUrl ? (
+                    <Image
+                      src={track.imageUrl}
+                      alt={track.name}
+                      width={32}
+                      height={32}
+                      className="w-8 h-8 rounded object-cover shrink-0"
+                      unoptimized
+                    />
+                  ) : (
+                    <div className="w-8 h-8 rounded bg-surface-elevated flex items-center justify-center text-muted text-xs shrink-0">♪</div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-medium group-hover:text-accent transition-colors truncate">{track.name}</div>
+                    <div className="text-[10px] text-muted truncate">{track.artists}</div>
+                  </div>
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Playlist creation */}
         <div className="px-5 pt-5 pb-6">
           <p className="text-xs text-muted mb-3">
             Discover music similar to your top artists from {country.countryName}.
           </p>
-          {playlistUrl ? (
-            <a
-              href={playlistUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 w-full py-3 rounded-full bg-accent text-black text-sm font-semibold hover:brightness-110 transition-all"
-            >
-              <SpotifyIcon />
-              Open Playlist on Spotify
-            </a>
-          ) : (
+          <div className="flex flex-col gap-2">
+            {/* Preview button */}
             <button
-              onClick={() => onCreatePlaylist(country)}
-              disabled={creatingPlaylist}
-              className="flex items-center justify-center gap-2 w-full py-3 rounded-full bg-accent text-black text-sm font-semibold hover:brightness-110 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+              onClick={() => onPreviewPlaylist(country)}
+              disabled={previewingPlaylist}
+              className="flex items-center justify-center gap-2 w-full py-2.5 rounded-full bg-surface-elevated border border-border text-sm font-medium text-foreground hover:text-accent hover:border-accent/40 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              {creatingPlaylist ? (
+              {previewingPlaylist ? (
                 <>
-                  <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-                  Creating playlist…
+                  <div className="w-3.5 h-3.5 border-2 border-muted/30 border-t-accent rounded-full animate-spin" />
+                  Loading preview…
                 </>
               ) : (
                 <>
-                  <SpotifyIcon />
-                  Create Discovery Playlist
+                  👀 Preview Playlist
                 </>
               )}
             </button>
-          )}
+
+            {/* Create button */}
+            {playlistUrl ? (
+              <a
+                href={playlistUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 w-full py-3 rounded-full bg-accent text-black text-sm font-semibold hover:brightness-110 transition-all"
+              >
+                <SpotifyIcon />
+                Open Playlist on Spotify
+              </a>
+            ) : (
+              <button
+                onClick={() => onCreatePlaylist(country)}
+                disabled={creatingPlaylist}
+                className="flex items-center justify-center gap-2 w-full py-3 rounded-full bg-accent text-black text-sm font-semibold hover:brightness-110 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {creatingPlaylist ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+                    Creating playlist…
+                  </>
+                ) : (
+                  <>
+                    <SpotifyIcon />
+                    Create Discovery Playlist
+                  </>
+                )}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

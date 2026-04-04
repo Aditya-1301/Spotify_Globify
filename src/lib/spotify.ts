@@ -42,6 +42,34 @@ async function spotifyFetch(
   });
 }
 
+// --- Batch Artist Lookup (fills in images + genres for track-only artists) ---
+
+export async function getArtistsByIds(
+  accessToken: string,
+  ids: string[]
+): Promise<SpotifyArtist[]> {
+  if (ids.length === 0) return [];
+  const artists: SpotifyArtist[] = [];
+
+  // Spotify allows max 50 IDs per request
+  for (let i = 0; i < ids.length; i += 50) {
+    const batch = ids.slice(i, i + 50);
+    const res = await spotifyFetch(
+      accessToken,
+      `/artists?ids=${batch.join(",")}`
+    );
+    if (!res.ok) {
+      console.error(`[spotify] getArtistsByIds batch failed: ${res.status}`);
+      continue;
+    }
+    const data = (await res.json()) as { artists: (SpotifyArtist | null)[] };
+    for (const a of data.artists) {
+      if (a) artists.push(a);
+    }
+  }
+  return artists;
+}
+
 // --- User Profile ---
 
 export interface SpotifyUser {

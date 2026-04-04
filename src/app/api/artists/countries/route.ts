@@ -13,7 +13,11 @@ export async function POST(request: NextRequest) {
   const encoder = new TextEncoder();
 
   const send = (ctrl: ReadableStreamDefaultController, msg: StreamMsg) => {
-    ctrl.enqueue(encoder.encode(JSON.stringify(msg) + "\n"));
+    try {
+      ctrl.enqueue(encoder.encode(JSON.stringify(msg) + "\n"));
+    } catch {
+      // The stream was likely aborted by the client, safe to ignore
+    }
   };
 
   const stream = new ReadableStream({

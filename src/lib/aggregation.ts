@@ -19,74 +19,16 @@ export interface ArtistSummary {
   spotifyUrl: string;
 }
 
-// ISO 3166-1 alpha-2 to country name mapping (common countries)
-const COUNTRY_NAMES: Record<string, string> = {
-  US: "United States",
-  GB: "United Kingdom",
-  CA: "Canada",
-  AU: "Australia",
-  DE: "Germany",
-  FR: "France",
-  JP: "Japan",
-  KR: "South Korea",
-  BR: "Brazil",
-  MX: "Mexico",
-  ES: "Spain",
-  IT: "Italy",
-  SE: "Sweden",
-  NO: "Norway",
-  NL: "Netherlands",
-  IN: "India",
-  NG: "Nigeria",
-  ZA: "South Africa",
-  JM: "Jamaica",
-  CO: "Colombia",
-  AR: "Argentina",
-  PR: "Puerto Rico",
-  IE: "Ireland",
-  NZ: "New Zealand",
-  PT: "Portugal",
-  BE: "Belgium",
-  AT: "Austria",
-  CH: "Switzerland",
-  DK: "Denmark",
-  FI: "Finland",
-  PL: "Poland",
-  RU: "Russia",
-  UA: "Ukraine",
-  TR: "Turkey",
-  EG: "Egypt",
-  KE: "Kenya",
-  GH: "Ghana",
-  TZ: "Tanzania",
-  CU: "Cuba",
-  DO: "Dominican Republic",
-  CL: "Chile",
-  PE: "Peru",
-  VE: "Venezuela",
-  PH: "Philippines",
-  TH: "Thailand",
-  VN: "Vietnam",
-  ID: "Indonesia",
-  MY: "Malaysia",
-  TW: "Taiwan",
-  HK: "Hong Kong",
-  SG: "Singapore",
-  IL: "Israel",
-  LB: "Lebanon",
-  IS: "Iceland",
-  RO: "Romania",
-  HU: "Hungary",
-  CZ: "Czech Republic",
-  GR: "Greece",
-  HR: "Croatia",
-  RS: "Serbia",
-  BG: "Bulgaria",
-  SK: "Slovakia",
-};
+// Use the browser/Node Intl API to resolve any ISO 3166-1 alpha-2 code to a full name
+const regionNames = new Intl.DisplayNames(["en"], { type: "region" });
 
 export function getCountryName(code: string): string {
-  return COUNTRY_NAMES[code] || code;
+  try {
+    const upperCode = code.toUpperCase();
+    return regionNames.of(upperCode) || upperCode;
+  } catch {
+    return code;
+  }
 }
 
 export function aggregateByCountry(

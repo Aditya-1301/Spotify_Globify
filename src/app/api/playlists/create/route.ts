@@ -23,6 +23,7 @@ export async function POST(request: NextRequest) {
     countryCode: string;
     countryName: string;
     seedArtistIds: string[];
+    dryRun?: boolean;
   };
   try {
     body = await request.json();
@@ -57,6 +58,23 @@ export async function POST(request: NextRequest) {
         { error: "No recommendations found for this country" },
         { status: 404 }
       );
+    }
+
+    // If dry run, return the recommendations without creating a playlist
+    if (body.dryRun) {
+      return NextResponse.json({
+        dryRun: true,
+        tracks: tracks.map((t) => ({
+          id: t.id,
+          name: t.name,
+          artists: t.artists.map((a) => a.name).join(", "),
+          album: t.album?.name || "",
+          previewUrl: t.preview_url,
+          spotifyUrl: t.external_urls?.spotify || "",
+          imageUrl: t.album?.images?.[0]?.url || null,
+        })),
+        trackCount: tracks.length,
+      });
     }
 
     // Get user ID for playlist creation

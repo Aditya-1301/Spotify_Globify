@@ -17,8 +17,30 @@ export async function GET(request: NextRequest) {
     process.env.NEXT_PUBLIC_REDIRECT_URI ||
     `${request.nextUrl.origin}/api/auth/callback`;
 
+  // Diagnostic logging
+  console.log("[auth/callback] === AUTH CALLBACK DEBUG ===");
+  console.log("[auth/callback] Request URL:", request.url);
+  console.log("[auth/callback] Origin:", request.nextUrl.origin);
+  console.log("[auth/callback] appUrl:", appUrl);
+  console.log("[auth/callback] redirectUri:", redirectUri);
+  console.log("[auth/callback] error param:", error);
+  console.log("[auth/callback] code present:", !!code);
+  console.log("[auth/callback] state param:", state);
+  console.log("[auth/callback] storedState cookie:", storedState);
+  console.log("[auth/callback] state match:", state === storedState);
+  console.log("[auth/callback] codeVerifier present:", !!codeVerifier);
+  console.log("[auth/callback] All cookies:", request.cookies.getAll().map(c => c.name));
+
   // Validate state to prevent CSRF
   if (error || !code || !state || state !== storedState || !codeVerifier) {
+    console.error("[auth/callback] VALIDATION FAILED:", {
+      hasError: !!error,
+      errorValue: error,
+      hasCode: !!code,
+      hasState: !!state,
+      stateMatch: state === storedState,
+      hasCodeVerifier: !!codeVerifier,
+    });
     return NextResponse.redirect(
       `${appUrl}/?error=${error || "auth_failed"}`
     );

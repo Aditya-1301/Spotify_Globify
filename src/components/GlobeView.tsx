@@ -10,22 +10,12 @@ interface TopItemsResponse {
     id: string;
     name: string;
     genres: string[];
-    images: { url: string }[];
-    external_urls: { spotify: string };
+    imageUrl: string | null;
+    spotifyUrl: string;
   }[];
   tracks: {
     id: string;
-    name: string;
-    artists: { id: string; name: string }[];
-    album: { images: { url: string }[] };
-    external_urls: { spotify: string };
-  }[];
-  recentlyPlayed?: {
-    id: string;
-    name: string;
-    artists: { id: string; name: string }[];
-    album: { images: { url: string }[] };
-    external_urls: { spotify: string };
+    artistIds: string[];
   }[];
 }
 
@@ -38,6 +28,7 @@ export default function GlobeView() {
   const [hoveredCountry, setHoveredCountry] = useState<CountryData | null>(null);
   const [progress, setProgress] = useState("");
   const [timeRange, setTimeRange] = useState<string>("medium_term");
+  const [vizMode, setVizMode] = useState<"globe" | "graph">("globe");
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -47,53 +38,28 @@ export default function GlobeView() {
     setProgress("Fetching your top artists and tracks...");
 
     try {
-      // Step 1: Get top items from Spotify
+      // Step 1: Get top items from Spotify (already deduplicated server-side)
+      console.log("[GlobeView] Step 1: Fetching top items...");
       const topRes = await fetch(`/api/spotify/top-items?time_range=${timeRange}`);
       if (!topRes.ok) throw new Error("Failed to fetch Spotify data");
       const topData: TopItemsResponse = await topRes.json();
+      console.log("[GlobeView] Step 1 done:", topData.artists.length, "artists,", topData.tracks.length, "tracks");
 
-      // Extract all unique artists
-      const allArtists = new Map<string, { id: string; name: string; genres: string[]; imageUrl: string | null; spotifyUrl: string }>();
-
-      for (const a of topData.artists) {
-        allArtists.set(a.id, {
-          id: a.id,
-          name: a.name,
-          genres: a.genres ?? [],
-          imageUrl: a.images[0]?.url || null,
-          spotifyUrl: a.external_urls.spotify,
-        });
-      }
-
-      const allTracks = [...topData.tracks, ...(topData.recentlyPlayed || [])];
-      for (const track of allTracks) {
-        for (const ta of track.artists) {
-          if (!allArtists.has(ta.id)) {
-            allArtists.set(ta.id, {
-              id: ta.id,
-              name: ta.name,
-              genres: [],
-              imageUrl: null, // Track artists only have id/name
-              spotifyUrl: `https://open.spotify.com/artist/${ta.id}`,
-            });
-          }
-        }
-      }
-
-      setProgress(`Found ${allArtists.size} artists across tracks and history. Resolving countries...`);
-
-      // Build fast lookup maps up front
-      const artistById = allArtists;
+      // Build lookup maps from the pre-processed data
+      const artistById = new Map(
+        topData.artists.map((a) => [a.id, a])
+      );
 
       // Track which tracks belong to which artist
       const tracksByArtist = new Map<string, Set<string>>();
-      for (const track of allTracks) {
-        for (const ta of track.artists) {
-          if (!tracksByArtist.has(ta.id)) tracksByArtist.set(ta.id, new Set());
-          tracksByArtist.get(ta.id)!.add(track.id);
+      for (const track of topData.tracks) {
+        for (const artistId of track.artistIds) {
+          if (!tracksByArtist.has(artistId)) tracksByArtist.set(artistId, new Set());
+          tracksByArtist.get(artistId)!.add(track.id);
         }
       }
 
+      setProgress(`Found ${topData.artists.length} artists. Resolving countries...`);
       // Running artistId → countryCode map, updated as stream arrives
       const artistCountryMap = new Map<string, string | null>();
 
@@ -142,21 +108,41 @@ export default function GlobeView() {
         return result;
       };
 
-      const artistsArray = Array.from(allArtists.values());
-      const countriesRes = await fetch("/api/artists/countries", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          artists: artistsArray.map((a) => ({
-            id: a.id,
-            name: a.name,
-            genres: a.genres,
-            imageUrl: a.imageUrl,
-          })),
-        }),
-      });
+      // Step 2: Stream artist country resolution with timeout
+      console.log("[GlobeView] Step 2: Posting to /api/artists/countries...");
+      const controller = new AbortController();
+      const timeout = setTimeout(() => {
+        console.warn("[GlobeView] Stream timeout after 60s — aborting");
+        controller.abort();
+      }, 60000);
 
-      if (!countriesRes.ok || !countriesRes.body) throw new Error("Failed to resolve countries");
+      let countriesRes: Response;
+      try {
+        countriesRes = await fetch("/api/artists/countries", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            artists: topData.artists.map((a) => ({
+              id: a.id,
+              name: a.name,
+              genres: a.genres,
+              imageUrl: a.imageUrl,
+            })),
+          }),
+          signal: controller.signal,
+        });
+      } catch (fetchErr) {
+        clearTimeout(timeout);
+        console.error("[GlobeView] Countries fetch failed:", fetchErr);
+        throw new Error("Country resolution request failed");
+      }
+
+      console.log("[GlobeView] Countries response status:", countriesRes.status);
+
+      if (!countriesRes.ok || !countriesRes.body) {
+        clearTimeout(timeout);
+        throw new Error("Failed to resolve countries");
+      }
 
       const reader = countriesRes.body.getReader();
       const decoder = new TextDecoder();
@@ -172,11 +158,17 @@ export default function GlobeView() {
           updateTimeout = null;
         }
         const data = buildCountryData();
+        console.log("[GlobeView] Flushing update:", data.length, "countries,", totalResolved, "artists resolved");
         setCountryData(data);
         if (!firstDataShown) {
           firstDataShown = true;
           setLoading(false);
-          setResolving(true);
+          // If the batch resolved all artists at once (cached), skip "resolving" state
+          if (totalResolved >= topData.artists.length) {
+            setResolving(false);
+          } else {
+            setResolving(true);
+          }
         }
       };
 
@@ -188,52 +180,61 @@ export default function GlobeView() {
       };
 
       // Stream reading loop
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      try {
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
 
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          let msg: Record<string, unknown>;
-          try {
-            msg = JSON.parse(line) as Record<string, unknown>;
-          } catch {
-            continue;
-          }
-
-          const msgType = msg.type as string;
-          if (msgType === "error") {
-            console.error("Stream error from server:", msg.message);
-            // Don't abort — keep partial data if we have it
-            break;
-          } else if (msgType === "batch") {
-            const artists = msg.artists as Array<{ id: string; countryCode: string | null; name: string }>;
-            if (Array.isArray(artists)) {
-              for (const a of artists) {
-                artistCountryMap.set(a.id, a.countryCode);
-                totalResolved++;
-              }
-              scheduleUpdate();
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            let msg: Record<string, unknown>;
+            try {
+              msg = JSON.parse(line) as Record<string, unknown>;
+            } catch {
+              continue;
             }
-          } else if (msgType === "artist" && typeof msg.id === "string") {
-            artistCountryMap.set(msg.id, (msg.countryCode as string | null) ?? null);
-            totalResolved++;
-            setProgress(`Resolved ${totalResolved} / ${allArtists.size} artists...`);
-            scheduleUpdate();
-          } else if (msgType === "done") {
-            flushUpdate();
+
+            const msgType = msg.type as string;
+            if (msgType === "error") {
+              console.error("[GlobeView] Stream error from server:", msg.message);
+              break;
+            } else if (msgType === "batch") {
+              const artists = msg.artists as Array<{ id: string; countryCode: string | null; name: string }>;
+              if (Array.isArray(artists)) {
+                for (const a of artists) {
+                  artistCountryMap.set(a.id, a.countryCode);
+                  totalResolved++;
+                }
+                console.log("[GlobeView] Batch received:", artists.length, "artists, total:", totalResolved);
+                scheduleUpdate();
+              }
+            } else if (msgType === "artist" && typeof msg.id === "string") {
+              artistCountryMap.set(msg.id, (msg.countryCode as string | null) ?? null);
+              totalResolved++;
+              setProgress(`Resolved ${totalResolved} / ${topData.artists.length} artists...`);
+              scheduleUpdate();
+            } else if (msgType === "done") {
+              console.log("[GlobeView] Stream done message received");
+              flushUpdate();
+            }
           }
         }
+      } catch (streamErr) {
+        console.error("[GlobeView] Stream reading error:", streamErr);
+      } finally {
+        clearTimeout(timeout);
       }
 
       // Final flush after stream ends
+      console.log("[GlobeView] Stream ended, final flush. Total resolved:", totalResolved);
       flushUpdate();
     } catch (err) {
+      console.error("[GlobeView] loadData error:", err);
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setLoading(false);
@@ -248,28 +249,55 @@ export default function GlobeView() {
 
   return (
     <div className="flex-1 flex flex-col">
-      {/* Time range selector */}
-      <div className="flex items-center justify-center gap-2 py-4">
-        {[
-          { value: "short_term", label: "Last 4 Weeks" },
-          { value: "medium_term", label: "Last 6 Months" },
-          { value: "long_term", label: "All Time" },
-        ].map((range) => (
+      {/* Controls bar */}
+      <div className="flex items-center justify-center gap-4 py-4 flex-wrap">
+        {/* Time range */}
+        <div className="flex items-center gap-2">
+          {[
+            { value: "short_term", label: "Last 4 Weeks" },
+            { value: "medium_term", label: "Last 6 Months" },
+            { value: "long_term", label: "All Time" },
+          ].map((range) => (
+            <button
+              key={range.value}
+              onClick={() => setTimeRange(range.value)}
+              className={`px-4 py-2 text-sm rounded-full transition-colors ${
+                timeRange === range.value
+                  ? "bg-accent text-black font-semibold"
+                  : "bg-surface border border-border text-muted hover:text-foreground"
+              }`}
+            >
+              {range.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Viz toggle */}
+        <div className="flex items-center bg-surface border border-border rounded-full p-0.5">
           <button
-            key={range.value}
-            onClick={() => setTimeRange(range.value)}
-            className={`px-4 py-2 text-sm rounded-full transition-colors ${
-              timeRange === range.value
+            onClick={() => setVizMode("globe")}
+            className={`px-3 py-1.5 text-sm rounded-full transition-colors ${
+              vizMode === "globe"
                 ? "bg-accent text-black font-semibold"
-                : "bg-surface border border-border text-muted hover:text-foreground"
+                : "text-muted hover:text-foreground"
             }`}
           >
-            {range.label}
+            🌍 Globe
           </button>
-        ))}
+          <button
+            onClick={() => setVizMode("graph")}
+            className={`px-3 py-1.5 text-sm rounded-full transition-colors ${
+              vizMode === "graph"
+                ? "bg-accent text-black font-semibold"
+                : "text-muted hover:text-foreground"
+            }`}
+          >
+            🕸️ Graph
+          </button>
+        </div>
       </div>
 
-      {/* Loading / Error / Globe */}
+      {/* Loading / Error / Visualization */}
       {loading ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           <div className="w-12 h-12 border-4 border-border border-t-accent rounded-full animate-spin" />
@@ -287,7 +315,7 @@ export default function GlobeView() {
         </div>
       ) : (
         <div className="flex-1 flex flex-col lg:flex-row min-h-0">
-          {/* Globe — left (or full width on small screens) */}
+          {/* Visualization — left */}
           <div className="flex-1 min-h-[400px] min-w-0 relative">
             {resolving && (
               <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 bg-surface/80 backdrop-blur-sm rounded-full px-3 py-1 pointer-events-none">
@@ -295,21 +323,25 @@ export default function GlobeView() {
                 <span className="text-muted text-xs">{progress}</span>
               </div>
             )}
-            <GlobeRenderer
-              countryData={countryData}
-              onCountryClick={(c) => {
-                setSelectedCountry(c);
-                setHoveredCountry(null);
-              }}
-              onCountryHover={setHoveredCountry}
-            />
+            {vizMode === "globe" ? (
+              <GlobeRenderer
+                countryData={countryData}
+                onCountryClick={(c) => {
+                  setSelectedCountry(c);
+                  setHoveredCountry(null);
+                }}
+                onCountryHover={setHoveredCountry}
+              />
+            ) : (
+              <GraphRenderer countryData={countryData} />
+            )}
           </div>
 
           {/* Country Panel — right sidebar */}
           <div className="w-full lg:w-[380px] shrink-0 border-t lg:border-t-0 lg:border-l border-border overflow-y-auto">
             <CountryPanel
               countryData={countryData}
-              activeCountry={selectedCountry ?? hoveredCountry}
+              activeCountry={selectedCountry}
               onSelectCountry={setSelectedCountry}
             />
           </div>
@@ -355,4 +387,24 @@ function GlobeRenderer({
       onCountryHover={onCountryHover}
     />
   );
+}
+
+// ---- Graph Renderer (lazy-loaded) ----
+
+function GraphRenderer({ countryData }: { countryData: CountryData[] }) {
+  const [GraphComponent, setGraphComponent] = useState<React.ComponentType<{ countryData: CountryData[] }> | null>(null);
+
+  useEffect(() => {
+    import("@/components/GraphView").then((mod) => setGraphComponent(() => mod.default));
+  }, []);
+
+  if (!GraphComponent) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="w-8 h-8 border-4 border-border border-t-accent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  return <GraphComponent countryData={countryData} />;
 }
