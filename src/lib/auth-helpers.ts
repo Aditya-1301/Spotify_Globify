@@ -15,14 +15,17 @@ export async function getValidAccessToken(): Promise<{
   // If token expires in less than 5 minutes, refresh
   if (session.tokenExpiresAt < Date.now() + 5 * 60 * 1000) {
     try {
+      console.log("[auth] Token expired or expiring soon, refreshing...");
       const refreshed = await refreshAccessToken(session.refreshToken);
       await updateSessionTokens(
         refreshed.access_token,
         refreshed.refresh_token,
         refreshed.expires_in
       );
+      console.log("[auth] Token refreshed successfully");
       return { accessToken: refreshed.access_token, userId: session.userId };
-    } catch {
+    } catch (err) {
+      console.error("[auth] Token refresh failed:", err);
       return null;
     }
   }

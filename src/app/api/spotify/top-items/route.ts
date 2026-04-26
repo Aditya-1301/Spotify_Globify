@@ -11,6 +11,7 @@ import {
 export async function GET(request: NextRequest) {
   const auth = await getValidAccessToken();
   if (!auth) {
+    console.error("[top-items] No valid access token — user not authenticated or token refresh failed");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -73,8 +74,9 @@ export async function GET(request: NextRequest) {
 
     // Fetch full details for track-only artists (images, genres)
     if (missingArtists.size > 0) {
-      console.log(`[top-items] Enriching ${missingArtists.size} track-only artists...`);
-      const validIdsForApi = Array.from(missingArtists.keys()).filter(id => !id.includes("local"));
+      // Only request IDs that are purely alphanumeric base62 strings (Spotify IDs are usually 22 chars but can be any length).
+      // This prevents colons, hyphens, and spaces from throwing 400 Bad Request errors.
+      const validIdsForApi = Array.from(missingArtists.keys()).filter(id => /^[a-zA-Z0-9]+$/.test(id));
       const enriched = validIdsForApi.length > 0 ? await getArtistsByIds(auth.accessToken, validIdsForApi) : [];
       
       for (const a of enriched) {
@@ -102,6 +104,7 @@ export async function GET(request: NextRequest) {
     }
 
     const allArtists = Array.from(artistMap.values());
+
     console.log(`[top-items] Total unique artists: ${allArtists.length}`);
 
     return NextResponse.json({

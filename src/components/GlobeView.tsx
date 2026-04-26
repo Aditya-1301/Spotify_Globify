@@ -41,7 +41,10 @@ export default function GlobeView() {
       // Step 1: Get top items from Spotify (already deduplicated server-side)
       console.log("[GlobeView] Step 1: Fetching top items...");
       const topRes = await fetch(`/api/spotify/top-items?time_range=${timeRange}`);
-      if (!topRes.ok) throw new Error("Failed to fetch Spotify data");
+      if (!topRes.ok) {
+        const body = await topRes.text().catch(() => "");
+        throw new Error(`Failed to fetch Spotify data (${topRes.status}): ${body}`);
+      }
       const topData: TopItemsResponse = await topRes.json();
       console.log("[GlobeView] Step 1 done:", topData.artists.length, "artists,", topData.tracks.length, "tracks");
 
@@ -99,6 +102,7 @@ export default function GlobeView() {
             countryName: cc === "XX" ? "Unknown Region" : getCountryName(cc),
             artistCount: data.artists.size,
             trackCount: data.tracks.size,
+            trackIds: Array.from(data.tracks),
             topArtists: Array.from(data.artists.values()),
             genres: Array.from(data.genres).slice(0, 10),
             languages: COUNTRY_LANGUAGE[cc] || [],
@@ -204,10 +208,17 @@ export default function GlobeView() {
               console.error("[GlobeView] Stream error from server:", msg.message);
               break;
             } else if (msgType === "batch") {
-              const artists = msg.artists as Array<{ id: string; countryCode: string | null; name: string }>;
+              const artists = msg.artists as Array<{ id: string; countryCode: string | null; name: string; genres?: string[] }>;
               if (Array.isArray(artists)) {
                 for (const a of artists) {
                   artistCountryMap.set(a.id, a.countryCode);
+                  // Merge MB genres into artist data when Spotify genres are empty
+                  if (a.genres?.length) {
+                    const existing = artistById.get(a.id);
+                    if (existing && existing.genres.length === 0) {
+                      existing.genres = a.genres;
+                    }
+                  }
                   totalResolved++;
                 }
                 console.log("[GlobeView] Batch received:", artists.length, "artists, total:", totalResolved);
@@ -215,6 +226,14 @@ export default function GlobeView() {
               }
             } else if (msgType === "artist" && typeof msg.id === "string") {
               artistCountryMap.set(msg.id, (msg.countryCode as string | null) ?? null);
+              // Merge MB genres into artist data when Spotify genres are empty
+              const mbGenres = msg.genres as string[] | undefined;
+              if (mbGenres?.length) {
+                const existing = artistById.get(msg.id as string);
+                if (existing && existing.genres.length === 0) {
+                  existing.genres = mbGenres;
+                }
+              }
               totalResolved++;
               setProgress(`Resolved ${totalResolved} / ${topData.artists.length} artists...`);
               scheduleUpdate();

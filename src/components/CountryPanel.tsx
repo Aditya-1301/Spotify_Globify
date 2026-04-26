@@ -108,8 +108,19 @@ function StatsOverview({
 }) {
   const [viewMode, setViewMode] = useState<ViewMode>("countries");
 
-  const totalArtists = countryData.reduce((s, c) => s + c.artistCount, 0);
-  const totalTracks = countryData.reduce((s, c) => s + c.trackCount, 0);
+  // Count unique artists/tracks across all countries (an artist shared across
+  // two countries would be double-counted by a simple .reduce sum)
+  const totalArtists = useMemo(() => {
+    const ids = new Set<string>();
+    for (const c of countryData) for (const a of c.topArtists) ids.add(a.id);
+    return ids.size;
+  }, [countryData]);
+  const totalTracks = useMemo(() => {
+    const ids = new Set<string>();
+    for (const c of countryData) for (const tid of c.trackIds ?? []) ids.add(tid);
+    // Fallback: if trackIds not present, use the per-country sum (old behaviour)
+    return ids.size > 0 ? ids.size : countryData.reduce((s, c) => s + c.trackCount, 0);
+  }, [countryData]);
 
   const allGenres = useMemo(() => {
     const genreMap = new Map<string, number>();

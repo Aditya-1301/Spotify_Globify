@@ -32,6 +32,17 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // Spotify requires the redirect URI to exactly match the one registered in the
+  // developer dashboard. If the user arrives on a different hostname (e.g. "localhost"
+  // while the registered URI uses "127.0.0.1"), cookie-based PKCE state won't survive
+  // the Spotify redirect. Bounce the browser to the correct hostname first.
+  const required = new URL(redirectUri).hostname;
+  if (request.nextUrl.hostname !== required) {
+    const corrected = new URL(request.url);
+    corrected.hostname = required;
+    return NextResponse.redirect(corrected.toString());
+  }
+
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = await generateCodeChallenge(codeVerifier);
   const state = crypto.randomBytes(16).toString("hex");

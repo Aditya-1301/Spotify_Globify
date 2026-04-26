@@ -6,6 +6,8 @@ export interface CountryData {
   countryName: string;
   artistCount: number;
   trackCount: number;
+  /** All track IDs assigned to this country — used for unique-total counting across countries */
+  trackIds: string[];
   topArtists: ArtistSummary[];
   genres: string[];
   languages: string[];
@@ -106,6 +108,7 @@ export function aggregateByCountry(
       countryName: getCountryName(countryCode),
       artistCount: data.artists.size,
       trackCount: data.tracks.size,
+      trackIds: Array.from(data.tracks),
       topArtists: data.artistSummaries,
       genres: Array.from(data.genres).slice(0, 10),
       languages: Array.from(data.languages),

@@ -114,9 +114,10 @@ export async function upsertArtist(artist: {
           ON CONFLICT(spotify_id) DO UPDATE SET
             country_code = COALESCE(excluded.country_code, artists.country_code),
             language = COALESCE(excluded.language, artists.language),
-            genres = COALESCE(excluded.genres, artists.genres),
+            genres = CASE WHEN excluded.genres IS NOT NULL AND excluded.genres != '' THEN excluded.genres ELSE artists.genres END,
             musicbrainz_id = COALESCE(excluded.musicbrainz_id, artists.musicbrainz_id),
-            image_url = COALESCE(excluded.image_url, artists.image_url),
+            image_url = CASE WHEN excluded.image_url IS NOT NULL THEN excluded.image_url ELSE artists.image_url END,
+            name = CASE WHEN excluded.name IS NOT NULL AND excluded.name != '' THEN excluded.name ELSE artists.name END,
             last_updated = unixepoch()`,
     args: [
       artist.spotify_id,

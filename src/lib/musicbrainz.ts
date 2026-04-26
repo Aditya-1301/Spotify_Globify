@@ -200,6 +200,15 @@ function getCountryHintsFromGenres(genres: string[]): string[] {
 // Rate limiter: max 1 request per second
 let lastRequestTime = 0;
 
+/** Extract genre tags from a MusicBrainz artist result, sorted by vote count */
+function extractTags(artist: { tags?: { name: string; count: number }[] }): string[] {
+  if (!artist.tags || !Array.isArray(artist.tags)) return [];
+  return artist.tags
+    .filter((t) => t.count > 0)
+    .sort((a, b) => b.count - a.count)
+    .map((t) => t.name);
+}
+
 async function rateLimitedFetch(url: string): Promise<Response> {
   const now = Date.now();
   const timeSinceLastRequest = now - lastRequestTime;
@@ -223,6 +232,7 @@ export interface MusicBrainzArtistResult {
   name: string;
   countryCode: string | null;
   areaName: string | null;
+  genres: string[];
 }
 
 export async function searchArtist(
@@ -232,7 +242,7 @@ export async function searchArtist(
   try {
     const encodedName = encodeURIComponent(artistName);
     const res = await rateLimitedFetch(
-      `${MUSICBRAINZ_BASE}/artist/?query=artist:${encodedName}&fmt=json&limit=5`
+      `${MUSICBRAINZ_BASE}/artist/?query=artist:${encodedName}&fmt=json&limit=5&inc=tags`
     );
 
     if (!res.ok) {
@@ -255,7 +265,7 @@ export async function searchArtist(
     );
     const pool = exactMatches.length > 0 ? exactMatches : artists;
 
-    let best: { id: string; name: string; country?: string; area?: { type: string; name: string; "iso-3166-1-codes"?: string[] }; begin_area?: { type: string; name: string; "iso-3166-1-codes"?: string[] } };
+    let best: { id: string; name: string; country?: string; tags?: { name: string; count: number }[]; area?: { type: string; name: string; "iso-3166-1-codes"?: string[] }; begin_area?: { type: string; name: string; "iso-3166-1-codes"?: string[] } };
     if (genreHints.length > 0) {
       const hintedMatch = pool.find((a: typeof pool[0]) => {
         const cc = a.country || extractCountryFromArea(a.area) || extractCountryFromArea(a.begin_area);
@@ -266,6 +276,7 @@ export async function searchArtist(
       best = pool[0];
     }
 
+    const mbGenres = extractTags(best);
     let countryCode = best.country || extractCountryFromArea(best.area) || extractCountryFromArea(best.begin_area);
     let areaName = best.area?.name || best.begin_area?.name || null;
 
@@ -283,6 +294,7 @@ export async function searchArtist(
           name: best.name,
           countryCode: fallback.countryCode,
           areaName: fallback.areaName || areaName,
+          genres: mbGenres,
         };
       }
     }
@@ -292,6 +304,7 @@ export async function searchArtist(
       name: best.name,
       countryCode,
       areaName,
+      genres: mbGenres,
     };
   } catch (error) {
     console.error(`MusicBrainz lookup threw for "${artistName}":`, error);
@@ -372,6 +385,7 @@ async function searchWikidataArtist(
       name: String(best.label || artistName),
       countryCode: genreCountry || inferCountryCodeFromDescription(description),
       areaName: description || null,
+      genres: [],
     };
   } catch (error) {
     console.error(`Wikidata lookup failed for "${artistName}":`, error);
