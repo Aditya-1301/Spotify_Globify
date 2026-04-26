@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/spotify";
-import { setSessionCookie } from "@/lib/session";
+import { createSession } from "@/lib/session";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -71,8 +71,8 @@ export async function GET(request: NextRequest) {
     // Get user profile
     const user = await getCurrentUser(tokenData.access_token);
 
-    // Create session
-    await setSessionCookie({
+    // Build the JWT session token
+    const sessionJwt = await createSession({
       userId: user.id,
       accessToken: tokenData.access_token,
       refreshToken: tokenData.refresh_token,
@@ -81,14 +81,30 @@ export async function GET(request: NextRequest) {
       imageUrl: user.images?.[0]?.url,
     });
 
-    // Clean up PKCE cookies
+    // Build the redirect response and set ALL cookies on it directly.
+    // ⚠️  Do NOT use setSessionCookie() here — that writes to the Next.js
+    //     cookies() store which is attached to the *incoming* request, not to
+    //     the redirect response we return. The browser would never see it.
+    const isProduction = process.env.NODE_ENV === "production";
+    const MAX_AGE = 60 * 60 * 24 * 7; // 7 days
+
     const response = NextResponse.redirect(`${appUrl}/globe`);
+
+    response.cookies.set("globify_session", sessionJwt, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: "lax",
+      maxAge: MAX_AGE,
+      path: "/",
+    });
     response.cookies.delete("pkce_verifier");
     response.cookies.delete("oauth_state");
 
+    console.log("[auth/callback] Session cookie set on redirect response, redirecting to /globe");
     return response;
   } catch (err) {
     console.error("Auth callback error:", err);
     return NextResponse.redirect(`${appUrl}/?error=server_error`);
   }
 }
+

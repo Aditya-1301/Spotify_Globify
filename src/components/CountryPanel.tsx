@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo } from "react";
+import { useState, useMemo } from "react";
 import type { CountryData } from "@/lib/aggregation";
 import { getCountryFlag, COUNTRY_LANGUAGE } from "@/lib/iso-numeric";
 
