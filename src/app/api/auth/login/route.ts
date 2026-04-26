@@ -5,8 +5,6 @@ const SCOPES = [
   "user-read-private",
   "user-top-read",
   "user-read-recently-played",
-  "playlist-modify-public",
-  "playlist-modify-private",
 ].join(" ");
 
 function generateCodeVerifier(): string {

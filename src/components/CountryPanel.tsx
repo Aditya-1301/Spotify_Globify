@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useState, useMemo } from "react";
+import { useMemo } from "react";
 import type { CountryData } from "@/lib/aggregation";
 import { getCountryFlag, COUNTRY_LANGUAGE } from "@/lib/iso-numeric";
 
@@ -11,83 +11,12 @@ interface Props {
   onSelectCountry: (country: CountryData | null) => void;
 }
 
-interface PreviewTrack {
-  id: string;
-  name: string;
-  artists: string;
-  album: string;
-  spotifyUrl: string;
-  imageUrl: string | null;
-}
-
 export default function CountryPanel({ countryData, activeCountry, onSelectCountry }: Props) {
-  const [creatingFor, setCreatingFor] = useState<string | null>(null);
-  const [playlistUrl, setPlaylistUrl] = useState<string | null>(null);
-  const [playlistFor, setPlaylistFor] = useState<string | null>(null);
-  const [previewTracks, setPreviewTracks] = useState<PreviewTrack[] | null>(null);
-  const [previewingFor, setPreviewingFor] = useState<string | null>(null);
-
-  const handleCreatePlaylist = async (country: CountryData) => {
-    setCreatingFor(country.countryCode);
-    setPlaylistUrl(null);
-    setPlaylistFor(null);
-    try {
-      const res = await fetch("/api/playlists/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          countryCode: country.countryCode,
-          countryName: country.countryName,
-          seedArtistIds: country.topArtists.slice(0, 5).map((a) => a.id),
-        }),
-      });
-      if (!res.ok) throw new Error("Failed");
-      const data = (await res.json()) as { playlistUrl: string };
-      setPlaylistUrl(data.playlistUrl);
-      setPlaylistFor(country.countryCode);
-    } catch (err) {
-      console.error("Playlist creation failed:", err);
-    } finally {
-      setCreatingFor(null);
-    }
-  };
-
-  const handlePreviewPlaylist = async (country: CountryData) => {
-    setPreviewingFor(country.countryCode);
-    setPreviewTracks(null);
-    try {
-      const res = await fetch("/api/playlists/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          countryCode: country.countryCode,
-          countryName: country.countryName,
-          seedArtistIds: country.topArtists.slice(0, 5).map((a) => a.id),
-          dryRun: true,
-        }),
-      });
-      if (!res.ok) throw new Error("Failed");
-      const data = (await res.json()) as { tracks: PreviewTrack[] };
-      setPreviewTracks(data.tracks);
-    } catch (err) {
-      console.error("Preview failed:", err);
-    } finally {
-      setPreviewingFor(null);
-    }
-  };
-
   if (activeCountry) {
-    const cc = activeCountry.countryCode;
     return (
       <CountryDetailView
         country={activeCountry}
-        onBack={() => { onSelectCountry(null); setPreviewTracks(null); }}
-        onCreatePlaylist={handleCreatePlaylist}
-        onPreviewPlaylist={handlePreviewPlaylist}
-        creatingPlaylist={creatingFor === cc}
-        previewingPlaylist={previewingFor === cc}
-        playlistUrl={playlistFor === cc ? playlistUrl : null}
-        previewTracks={previewTracks}
+        onBack={() => onSelectCountry(null)}
       />
     );
   }
@@ -302,21 +231,9 @@ function TagRow({
 function CountryDetailView({
   country,
   onBack,
-  onCreatePlaylist,
-  onPreviewPlaylist,
-  creatingPlaylist,
-  previewingPlaylist,
-  playlistUrl,
-  previewTracks,
 }: {
   country: CountryData;
   onBack: () => void;
-  onCreatePlaylist: (c: CountryData) => void;
-  onPreviewPlaylist: (c: CountryData) => void;
-  creatingPlaylist: boolean;
-  previewingPlaylist: boolean;
-  playlistUrl: string | null;
-  previewTracks: PreviewTrack[] | null;
 }) {
   const flag = getCountryFlag(country.countryCode);
   const languages = country.languages.length > 0 ? country.languages : (COUNTRY_LANGUAGE[country.countryCode] || []);
@@ -358,7 +275,7 @@ function CountryDetailView({
       </div>
 
       {/* Scrollable body */}
-      <div className="flex-1 overflow-y-auto min-h-0">
+      <div className="flex-1 overflow-y-auto min-h-0 pb-6">
         {/* Artists */}
         <div className="px-5 pt-4">
           <h3 className="text-[11px] font-semibold text-muted uppercase tracking-widest mb-3">
@@ -433,109 +350,7 @@ function CountryDetailView({
             </div>
           </div>
         )}
-
-        {/* Preview tracks */}
-        {previewTracks && previewTracks.length > 0 && (
-          <div className="px-5 pt-5">
-            <h3 className="text-[11px] font-semibold text-muted uppercase tracking-widest mb-3">
-              Playlist Preview ({previewTracks.length} tracks)
-            </h3>
-            <div className="space-y-1 max-h-[300px] overflow-y-auto">
-              {previewTracks.map((track) => (
-                <a
-                  key={track.id}
-                  href={track.spotifyUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2.5 p-1.5 -mx-1.5 rounded-lg hover:bg-surface-elevated transition-colors group"
-                >
-                  {track.imageUrl ? (
-                    <Image
-                      src={track.imageUrl}
-                      alt={track.name}
-                      width={32}
-                      height={32}
-                      className="w-8 h-8 rounded object-cover shrink-0"
-                      unoptimized
-                    />
-                  ) : (
-                    <div className="w-8 h-8 rounded bg-surface-elevated flex items-center justify-center text-muted text-xs shrink-0">♪</div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-medium group-hover:text-accent transition-colors truncate">{track.name}</div>
-                    <div className="text-[10px] text-muted truncate">{track.artists}</div>
-                  </div>
-                </a>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Playlist creation */}
-        <div className="px-5 pt-5 pb-6">
-          <p className="text-xs text-muted mb-3">
-            Discover music similar to your top artists from {country.countryName}.
-          </p>
-          <div className="flex flex-col gap-2">
-            {/* Preview button */}
-            <button
-              onClick={() => onPreviewPlaylist(country)}
-              disabled={previewingPlaylist}
-              className="flex items-center justify-center gap-2 w-full py-2.5 rounded-full bg-surface-elevated border border-border text-sm font-medium text-foreground hover:text-accent hover:border-accent/40 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              {previewingPlaylist ? (
-                <>
-                  <div className="w-3.5 h-3.5 border-2 border-muted/30 border-t-accent rounded-full animate-spin" />
-                  Loading preview…
-                </>
-              ) : (
-                <>
-                  👀 Preview Playlist
-                </>
-              )}
-            </button>
-
-            {/* Create button */}
-            {playlistUrl ? (
-              <a
-                href={playlistUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-center gap-2 w-full py-3 rounded-full bg-accent text-black text-sm font-semibold hover:brightness-110 transition-all"
-              >
-                <SpotifyIcon />
-                Open Playlist on Spotify
-              </a>
-            ) : (
-              <button
-                onClick={() => onCreatePlaylist(country)}
-                disabled={creatingPlaylist}
-                className="flex items-center justify-center gap-2 w-full py-3 rounded-full bg-accent text-black text-sm font-semibold hover:brightness-110 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {creatingPlaylist ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-                    Creating playlist…
-                  </>
-                ) : (
-                  <>
-                    <SpotifyIcon />
-                    Create Discovery Playlist
-                  </>
-                )}
-              </button>
-            )}
-          </div>
-        </div>
       </div>
     </div>
-  );
-}
-
-function SpotifyIcon() {
-  return (
-    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z" />
-    </svg>
   );
 }
