@@ -30,7 +30,14 @@ export default function GlobeView() {
   const [timeRange, setTimeRange] = useState<string>("medium_term");
   const [vizMode, setVizMode] = useState<"globe" | "graph">("globe");
 
+  // Incremented each time loadData fires; lets stale invocations detect they've
+  // been superseded and bail out before touching any React state.
+  const loadGenRef = React.useRef(0);
+
   const loadData = useCallback(async () => {
+    const myGen = ++loadGenRef.current;
+    const isStale = () => loadGenRef.current !== myGen;
+
     setLoading(true);
     setResolving(false);
     setError(null);
@@ -41,6 +48,9 @@ export default function GlobeView() {
       // Step 1: Get top items from Spotify (already deduplicated server-side)
       console.log("[GlobeView] Step 1: Fetching top items...");
       const topRes = await fetch(`/api/spotify/top-items?time_range=${timeRange}`);
+
+      if (isStale()) return; // time range changed while we were fetching
+
       if (!topRes.ok) {
         const body = await topRes.text().catch(() => "");
         throw new Error(`Failed to fetch Spotify data (${topRes.status}): ${body}`);
@@ -137,9 +147,12 @@ export default function GlobeView() {
         });
       } catch (fetchErr) {
         clearTimeout(timeout);
+        if (isStale()) return;
         console.error("[GlobeView] Countries fetch failed:", fetchErr);
         throw new Error("Country resolution request failed");
       }
+
+      if (isStale()) { controller.abort(); clearTimeout(timeout); return; }
 
       console.log("[GlobeView] Countries response status:", countriesRes.status);
 
@@ -157,6 +170,7 @@ export default function GlobeView() {
 
       // Flush accumulated changes to React state, transition from spinner to globe
       const flushUpdate = () => {
+        if (isStale()) return; // superseded — don't touch state
         if (updateTimeout) {
           clearTimeout(updateTimeout);
           updateTimeout = null;
@@ -178,6 +192,7 @@ export default function GlobeView() {
 
       // Batch rapid updates so we don't re-render on every single artist
       const scheduleUpdate = () => {
+        if (isStale()) return;
         if (!updateTimeout) {
           updateTimeout = setTimeout(flushUpdate, 250);
         }
@@ -189,6 +204,7 @@ export default function GlobeView() {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+          if (isStale()) { reader.cancel().catch(() => {}); break; } // bail out
 
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split("\n");
@@ -235,7 +251,7 @@ export default function GlobeView() {
                 }
               }
               totalResolved++;
-              setProgress(`Resolved ${totalResolved} / ${topData.artists.length} artists...`);
+              if (!isStale()) setProgress(`Resolved ${totalResolved} / ${topData.artists.length} artists...`);
               scheduleUpdate();
             } else if (msgType === "done") {
               console.log("[GlobeView] Stream done message received");
@@ -244,21 +260,27 @@ export default function GlobeView() {
           }
         }
       } catch (streamErr) {
-        console.error("[GlobeView] Stream reading error:", streamErr);
+        if (!isStale()) console.error("[GlobeView] Stream reading error:", streamErr);
       } finally {
         clearTimeout(timeout);
       }
 
       // Final flush after stream ends
-      console.log("[GlobeView] Stream ended, final flush. Total resolved:", totalResolved);
-      flushUpdate();
+      if (!isStale()) {
+        console.log("[GlobeView] Stream ended, final flush. Total resolved:", totalResolved);
+        flushUpdate();
+      }
     } catch (err) {
-      console.error("[GlobeView] loadData error:", err);
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      if (!isStale()) {
+        console.error("[GlobeView] loadData error:", err);
+        setError(err instanceof Error ? err.message : "Something went wrong");
+      }
     } finally {
-      setLoading(false);
-      setResolving(false);
-      setProgress("");
+      if (!isStale()) {
+        setLoading(false);
+        setResolving(false);
+        setProgress("");
+      }
     }
   }, [timeRange]);
 
