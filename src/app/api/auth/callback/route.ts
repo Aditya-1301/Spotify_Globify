@@ -11,7 +11,10 @@ export async function GET(request: NextRequest) {
   const storedState = request.cookies.get("oauth_state")?.value;
   const codeVerifier = request.cookies.get("pkce_verifier")?.value;
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  // Fall back to the request's own origin — this is safe on Vercel because
+  // the request always arrives at the correct deployment URL, even for previews.
+  // Only override via NEXT_PUBLIC_APP_URL if you need a canonical domain.
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
   const redirectUri =
     process.env.SPOTIFY_REDIRECT_URI ||
     process.env.NEXT_PUBLIC_REDIRECT_URI ||
