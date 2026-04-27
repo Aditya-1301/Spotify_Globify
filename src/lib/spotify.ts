@@ -37,6 +37,27 @@ async function spotifyFetch(
   accessToken: string,
   endpoint: string
 ): Promise<Response> {
+  const MAX_RETRIES = 3;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const res = await fetch(`${SPOTIFY_API_BASE}${endpoint}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (res.status === 429 && attempt < MAX_RETRIES) {
+      // Spotify sends Retry-After in seconds; default to 10s if missing
+      const retryAfter = parseInt(res.headers.get("retry-after") || "10", 10);
+      console.warn(
+        `[spotify] 429 on ${endpoint} — waiting ${retryAfter}s (attempt ${attempt}/${MAX_RETRIES})`
+      );
+      await new Promise((r) => setTimeout(r, retryAfter * 1000));
+      continue;
+    }
+
+    return res;
+  }
+
+  // Should never reach here, but satisfy TypeScript
   return fetch(`${SPOTIFY_API_BASE}${endpoint}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -89,19 +110,10 @@ export interface SpotifyUser {
 export async function getCurrentUser(
   accessToken: string
 ): Promise<SpotifyUser> {
-  let res = await spotifyFetch(accessToken, "/me");
-
-  if (res.status === 429) {
-    // Spotify tells us exactly how long to wait in the Retry-After header
-    const retryAfter = parseInt(res.headers.get("retry-after") || "3", 10);
-    console.warn(`[spotify] /me 429 Rate Limit. Waiting ${retryAfter}s...`);
-    await new Promise((r) => setTimeout(r, retryAfter * 1000));
-    res = await spotifyFetch(accessToken, "/me");
-  }
-
+  const res = await spotifyFetch(accessToken, "/me");
   if (!res.ok) {
-    const text = await res.text().catch(() => "no text");
-    throw new Error(`Failed to get user: ${res.status} ${text}`);
+    const text = await res.text().catch(() => "no body");
+    throw new Error(`Failed to get user: ${res.status} — ${text}`);
   }
   return res.json();
 }
