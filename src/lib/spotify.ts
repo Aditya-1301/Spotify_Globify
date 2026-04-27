@@ -89,8 +89,20 @@ export interface SpotifyUser {
 export async function getCurrentUser(
   accessToken: string
 ): Promise<SpotifyUser> {
-  const res = await spotifyFetch(accessToken, "/me");
-  if (!res.ok) throw new Error(`Failed to get user: ${res.status}`);
+  let res = await spotifyFetch(accessToken, "/me");
+
+  if (res.status === 429) {
+    // Spotify tells us exactly how long to wait in the Retry-After header
+    const retryAfter = parseInt(res.headers.get("retry-after") || "3", 10);
+    console.warn(`[spotify] /me 429 Rate Limit. Waiting ${retryAfter}s...`);
+    await new Promise((r) => setTimeout(r, retryAfter * 1000));
+    res = await spotifyFetch(accessToken, "/me");
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "no text");
+    throw new Error(`Failed to get user: ${res.status} ${text}`);
+  }
   return res.json();
 }
 
