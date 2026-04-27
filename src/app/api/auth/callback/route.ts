@@ -71,8 +71,26 @@ export async function GET(request: NextRequest) {
 
     const tokenData = await tokenRes.json();
 
-    // Get user profile
-    const user = await getCurrentUser(tokenData.access_token);
+    // Get user profile — retry up to 3 times on 429 (rate limit)
+    let user;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        user = await getCurrentUser(tokenData.access_token);
+        break; // success
+      } catch (err: unknown) {
+        const isRateLimit =
+          err instanceof Error && err.message.includes("429");
+        if (isRateLimit && attempt < 3) {
+          console.warn(
+            `[auth/callback] Spotify /me rate limited (429), retrying in ${attempt}s... (attempt ${attempt}/3)`
+          );
+          await new Promise((r) => setTimeout(r, attempt * 1000));
+          continue;
+        }
+        throw err; // re-throw on last attempt or non-429 errors
+      }
+    }
+    if (!user) throw new Error("Failed to fetch user profile after retries");
 
     // Build the JWT session token
     const sessionJwt = await createSession({
